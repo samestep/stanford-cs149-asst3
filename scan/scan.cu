@@ -26,6 +26,28 @@ static inline int nextPow2(int n) {
   return n;
 }
 
+__global__ void exclusive_scan_upsweep(int N, int *a, int two_d,
+                                       int two_dplus1) {
+  int k = two_dplus1 * (blockIdx.x * blockDim.x + threadIdx.x);
+  int j = k + two_dplus1 - 1;
+  if (j < N) {
+    int i = k + two_d - 1;
+    a[j] = a[i] + a[j];
+  }
+}
+
+__global__ void exclusive_scan_downsweep(int N, int *a, int two_d,
+                                         int two_dplus1) {
+  int k = two_dplus1 * (blockIdx.x * blockDim.x + threadIdx.x);
+  int j = k + two_dplus1 - 1;
+  if (j < N) {
+    int i = k + two_d - 1;
+    int t = a[i];
+    a[i] = a[j];
+    a[j] = t + a[j];
+  }
+}
+
 // exclusive_scan --
 //
 // Implementation of an exclusive scan on global memory array `input`,
@@ -51,6 +73,31 @@ void exclusive_scan(int *input, int N, int *result) {
   // on the CPU.  Your implementation will need to make multiple calls
   // to CUDA kernel functions (that you must write) to implement the
   // scan.
+
+  int threadsPerBlock = 512;
+  int M = nextPow2(N);
+
+  // upsweep phase
+  for (int two_d = 1; two_d < M / 2; two_d *= 2) {
+    int two_dplus1 = 2 * two_d;
+    int threads = M / two_dplus1;
+    int blocks = (threads + threadsPerBlock - 1) / threadsPerBlock;
+    exclusive_scan_upsweep<<<blocks, threadsPerBlock>>>(M, result, two_d,
+                                                        two_dplus1);
+    cudaDeviceSynchronize();
+  }
+
+  cudaMemset(&result[M - 1], 0, sizeof(int));
+
+  // downsweep phase
+  for (int two_d = M / 2; two_d >= 1; two_d /= 2) {
+    int two_dplus1 = 2 * two_d;
+    const int threads = M / two_dplus1;
+    const int blocks = (threads + threadsPerBlock - 1) / threadsPerBlock;
+    exclusive_scan_downsweep<<<blocks, threadsPerBlock>>>(M, result, two_d,
+                                                          two_dplus1);
+    cudaDeviceSynchronize();
+  }
 }
 
 //
