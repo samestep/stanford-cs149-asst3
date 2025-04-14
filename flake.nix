@@ -22,8 +22,8 @@
           with pkgs;
           mkShell {
             buildInputs = [
-              clang-tools
               cudatoolkit
+              llvmPackages_17.clang-tools
               nixfmt-rfc-style
             ];
           };

@@ -27,7 +27,7 @@ typedef enum {
 class CircleRenderer {
 
 public:
-  virtual ~CircleRenderer() {};
+  virtual ~CircleRenderer(){};
 
   virtual const Image *getImage() = 0;
 
