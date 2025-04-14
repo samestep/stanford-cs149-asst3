@@ -14,6 +14,24 @@
 
 #define THREADS_PER_BLOCK 256
 
+#define DEBUG
+
+#ifdef DEBUG
+#define cudaCheckError(ans)                                                    \
+  { cudaAssert((ans), __FILE__, __LINE__); }
+inline void cudaAssert(cudaError_t code, const char *file, int line,
+                       bool abort = true) {
+  if (code != cudaSuccess) {
+    fprintf(stderr, "CUDA Error: %s at %s:%d\n", cudaGetErrorString(code), file,
+            line);
+    if (abort)
+      exit(code);
+  }
+}
+#else
+#define cudaCheckError(ans) ans
+#endif
+
 // helper function to round an integer up to the next power of 2
 static inline int nextPow2(int n) {
   n--;
@@ -74,17 +92,16 @@ void exclusive_scan(int *input, int N, int *result) {
   // to CUDA kernel functions (that you must write) to implement the
   // scan.
 
-  int threadsPerBlock = 512;
   int M = nextPow2(N);
 
   // upsweep phase
-  for (int two_d = 1; two_d < M / 2; two_d *= 2) {
+  for (int two_d = 1; two_d <= M / 2; two_d *= 2) {
     int two_dplus1 = 2 * two_d;
     int threads = M / two_dplus1;
-    int blocks = (threads + threadsPerBlock - 1) / threadsPerBlock;
-    exclusive_scan_upsweep<<<blocks, threadsPerBlock>>>(M, result, two_d,
-                                                        two_dplus1);
-    cudaDeviceSynchronize();
+    int blocks = (threads + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    exclusive_scan_upsweep<<<blocks, THREADS_PER_BLOCK>>>(M, result, two_d,
+                                                          two_dplus1);
+    cudaCheckError(cudaDeviceSynchronize());
   }
 
   cudaMemset(&result[M - 1], 0, sizeof(int));
@@ -93,10 +110,10 @@ void exclusive_scan(int *input, int N, int *result) {
   for (int two_d = M / 2; two_d >= 1; two_d /= 2) {
     int two_dplus1 = 2 * two_d;
     const int threads = M / two_dplus1;
-    const int blocks = (threads + threadsPerBlock - 1) / threadsPerBlock;
-    exclusive_scan_downsweep<<<blocks, threadsPerBlock>>>(M, result, two_d,
-                                                          two_dplus1);
-    cudaDeviceSynchronize();
+    const int blocks = (threads + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    exclusive_scan_downsweep<<<blocks, THREADS_PER_BLOCK>>>(M, result, two_d,
+                                                            two_dplus1);
+    cudaCheckError(cudaDeviceSynchronize());
   }
 }
 

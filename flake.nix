@@ -25,6 +25,7 @@
               cudatoolkit
               llvmPackages_17.clang-tools
               nixfmt-rfc-style
+              python3
             ];
           };
       }
