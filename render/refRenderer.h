@@ -3,47 +3,40 @@
 
 #include "circleRenderer.h"
 
-
 class RefRenderer : public CircleRenderer {
 
 private:
+  Image *image;
+  SceneName sceneName;
 
-    Image* image;
-    SceneName sceneName;
-
-    int numCircles;
-    float* position;
-    float* velocity;
-    float* color;
-    float* radius;
+  int numCircles;
+  float *position;
+  float *velocity;
+  float *color;
+  float *radius;
 
 public:
+  RefRenderer();
+  virtual ~RefRenderer();
 
-    RefRenderer();
-    virtual ~RefRenderer();
+  const Image *getImage();
 
-    const Image* getImage();
+  void setup();
 
-    void setup();
+  void loadScene(SceneName name);
 
-    void loadScene(SceneName name);
+  void allocOutputImage(int width, int height);
 
-    void allocOutputImage(int width, int height);
+  void clearImage();
 
-    void clearImage();
+  void advanceAnimation();
 
-    void advanceAnimation();
+  void render();
 
-    void render();
+  void dumpParticles(const char *filename);
 
-    void dumpParticles(const char* filename);
-
-    void shadePixel(
-        int circleIndex,
-        float pixelCenterX, float pixelCenterY,
-        float px, float py, float pz,
-        float* pixelData);
+  void shadePixel(int circleIndex, float pixelCenterX, float pixelCenterY,
+                  float px, float py, float pz, float *pixelData);
 };
-
 
 #endif
