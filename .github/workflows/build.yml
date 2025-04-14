@@ -1,0 +1,9 @@
+name: Build
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: git ls-files '*.cpp' '*.cu' '*.cu_inl' '*.h' | xargs clang-format --dry-run -Werror
