@@ -29,6 +29,9 @@
       devShells.${system}.default = pkgs.mkShell {
         buildInputs = [
           pkgs.cudatoolkit
+          pkgs.freeglut
+          pkgs.libGL
+          pkgs.libGLU
           pkgs.llvmPackages_17.clang-tools
           pkgs.nixfmt-rfc-style
           pkgs.python3
