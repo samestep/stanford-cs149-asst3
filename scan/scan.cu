@@ -45,7 +45,7 @@ static inline int nextPow2(int n) {
 }
 
 __global__ void exclusive_scan_upsweep(int *a, int two_d, int two_dplus1) {
-  int thread = (blockIdx.x * blockDim.x + threadIdx.x);
+  int thread = blockIdx.x * blockDim.x + threadIdx.x;
   int k = two_dplus1 * thread;
   int i = k + two_d - 1;
   int j = k + (two_dplus1 - 1);
@@ -53,7 +53,7 @@ __global__ void exclusive_scan_upsweep(int *a, int two_d, int two_dplus1) {
 }
 
 __global__ void exclusive_scan_downsweep(int *a, int two_d, int two_dplus1) {
-  int thread = (blockIdx.x * blockDim.x + threadIdx.x);
+  int thread = blockIdx.x * blockDim.x + threadIdx.x;
   int k = two_dplus1 * thread;
   int i = k + two_d - 1;
   int j = k + (two_dplus1 - 1);
@@ -200,6 +200,18 @@ double cudaScanThrust(int *inarray, int *end, int *resultarray) {
   return overallDuration;
 }
 
+__global__ void find_repeats_mark(int n, int *a, int *b) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i + 1 < n)
+    b[i] = a[i] == a[i + 1];
+}
+
+__global__ void find_repeats_set(int n, int *a, int *b) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i + 1 < n && b[i] != b[i + 1])
+    a[b[i]] = i;
+}
+
 // find_repeats --
 //
 // Given an array of integers `device_input`, returns an array of all
@@ -220,7 +232,27 @@ int find_repeats(int *device_input, int length, int *device_output) {
   // must ensure that the results of find_repeats are correct given
   // the actual array length.
 
-  return 0;
+  int allocated = nextPow2(length);
+  int blocks = (allocated + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+
+  find_repeats_mark<<<blocks, THREADS_PER_BLOCK>>>(length, device_input,
+                                                   device_output);
+  cudaCheckError(cudaDeviceSynchronize());
+
+  exclusive_scan(device_output, length, device_output);
+
+  int pairs;
+  cudaCheckError(cudaMemcpy(&pairs, &device_output[length - 1], sizeof(int),
+                            cudaMemcpyDeviceToHost));
+
+  find_repeats_set<<<blocks, THREADS_PER_BLOCK>>>(length, device_input,
+                                                  device_output);
+  cudaCheckError(cudaDeviceSynchronize());
+
+  cudaMemcpy(device_output, device_input, pairs * sizeof(int),
+             cudaMemcpyDeviceToDevice);
+
+  return pairs;
 }
 
 //
