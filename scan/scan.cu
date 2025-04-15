@@ -44,26 +44,22 @@ static inline int nextPow2(int n) {
   return n;
 }
 
-__global__ void exclusive_scan_upsweep(int N, int *a, int two_d,
-                                       int two_dplus1) {
-  int k = two_dplus1 * (blockIdx.x * blockDim.x + threadIdx.x);
-  int j = k + two_dplus1 - 1;
-  if (j < N) {
-    int i = k + two_d - 1;
-    a[j] = a[i] + a[j];
-  }
+__global__ void exclusive_scan_upsweep(int *a, int two_d, int two_dplus1) {
+  int thread = (blockIdx.x * blockDim.x + threadIdx.x);
+  int k = two_dplus1 * thread;
+  int i = k + two_d - 1;
+  int j = k + (two_dplus1 - 1);
+  a[j] = a[i] + a[j];
 }
 
-__global__ void exclusive_scan_downsweep(int N, int *a, int two_d,
-                                         int two_dplus1) {
-  int k = two_dplus1 * (blockIdx.x * blockDim.x + threadIdx.x);
-  int j = k + two_dplus1 - 1;
-  if (j < N) {
-    int i = k + two_d - 1;
-    int t = a[i];
-    a[i] = a[j];
-    a[j] = t + a[j];
-  }
+__global__ void exclusive_scan_downsweep(int *a, int two_d, int two_dplus1) {
+  int thread = (blockIdx.x * blockDim.x + threadIdx.x);
+  int k = two_dplus1 * thread;
+  int i = k + two_d - 1;
+  int j = k + (two_dplus1 - 1);
+  int t = a[i];
+  a[i] = a[j];
+  a[j] = t + a[j];
 }
 
 // exclusive_scan --
@@ -98,21 +94,23 @@ void exclusive_scan(int *input, int N, int *result) {
   for (int two_d = 1; two_d <= M / 2; two_d *= 2) {
     int two_dplus1 = 2 * two_d;
     int threads = M / two_dplus1;
-    int blocks = (threads + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    exclusive_scan_upsweep<<<blocks, THREADS_PER_BLOCK>>>(M, result, two_d,
-                                                          two_dplus1);
+    int threadsPerBlock = min(THREADS_PER_BLOCK, threads);
+    int blocks = threads / threadsPerBlock;
+    exclusive_scan_upsweep<<<blocks, threadsPerBlock>>>(result, two_d,
+                                                        two_dplus1);
     cudaCheckError(cudaDeviceSynchronize());
   }
 
-  cudaMemset(&result[M - 1], 0, sizeof(int));
+  cudaCheckError(cudaMemset(&result[M - 1], 0, sizeof(int)));
 
   // downsweep phase
   for (int two_d = M / 2; two_d >= 1; two_d /= 2) {
     int two_dplus1 = 2 * two_d;
-    const int threads = M / two_dplus1;
-    const int blocks = (threads + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    exclusive_scan_downsweep<<<blocks, THREADS_PER_BLOCK>>>(M, result, two_d,
-                                                            two_dplus1);
+    int threads = M / two_dplus1;
+    int threadsPerBlock = min(THREADS_PER_BLOCK, threads);
+    int blocks = threads / threadsPerBlock;
+    exclusive_scan_downsweep<<<blocks, threadsPerBlock>>>(result, two_d,
+                                                          two_dplus1);
     cudaCheckError(cudaDeviceSynchronize());
   }
 }
