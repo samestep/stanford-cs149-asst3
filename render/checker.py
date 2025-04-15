@@ -78,7 +78,7 @@ def check_correctness(render_cmd, scene):
 def get_time(render_cmd, scene):
     # print("get_time %s %s" % (render_cmd, scene))
     cmd_string = (
-        "./%s -r cuda -b 0:4 %s -s 1024 -f logs/output | tee %s | grep Total:"
+        "%s -r cuda -b 0:4 %s -s 1024 -f logs/output | tee %s | grep Total:"
         % (
             render_cmd,
             scene,
@@ -123,7 +123,7 @@ def run_scenes(n_runs):
         # Check for performance
         if scene in score_scene_names:
             # Do multiple perf runs
-            stu_times[scene] = [get_time("render", scene) for _ in range(n_runs)]
+            stu_times[scene] = [get_time("./render", scene) for _ in range(n_runs)]
             ref_times[scene] = [get_time("render_ref", scene) for _ in range(n_runs)]
 
             print("[%s] Student times: " % (scene), stu_times[scene])

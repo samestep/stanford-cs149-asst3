@@ -24,6 +24,21 @@
           cp $src $out/bin/cudaScan_ref
         '';
       };
+      renderRef = pkgs.stdenv.mkDerivation {
+        name = "render_ref";
+        src = ./render/render_ref_x86;
+        dontUnpack = true;
+        nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+        buildInputs = [
+          pkgs.cudatoolkit
+          pkgs.freeglut
+          pkgs.libGL
+        ];
+        installPhase = ''
+          mkdir -p $out/bin
+          cp $src $out/bin/render_ref
+        '';
+      };
     in
     {
       devShells.${system}.default = pkgs.mkShell {
@@ -36,6 +51,7 @@
           pkgs.nixfmt-rfc-style
           pkgs.python3
           cudaScanRef
+          renderRef
         ];
       };
     };
