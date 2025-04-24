@@ -15,8 +15,14 @@ private:
   float *color;
   float *radius;
 
+  bool measureEnabled;
+  int numLevels;
+  int numSquares;
+  int *squaresPerCircleConservative;
+  int *circlesPerSquareConservative;
+
 public:
-  RefRenderer();
+  RefRenderer(bool measure);
   virtual ~RefRenderer();
 
   const Image *getImage();

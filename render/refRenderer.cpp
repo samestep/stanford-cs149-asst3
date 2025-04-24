@@ -1,6 +1,10 @@
 #include <algorithm>
+#include <filesystem>
+#include <map>
 #include <math.h>
+#include <set>
 #include <stdio.h>
+#include <string>
 #include <vector>
 
 #include "image.h"
@@ -9,7 +13,7 @@
 #include "sceneLoader.h"
 #include "util.h"
 
-RefRenderer::RefRenderer() {
+RefRenderer::RefRenderer(bool measure) {
   image = NULL;
 
   numCircles = 0;
@@ -17,6 +21,10 @@ RefRenderer::RefRenderer() {
   velocity = NULL;
   color = NULL;
   radius = NULL;
+
+  measureEnabled = measure;
+  squaresPerCircleConservative = NULL;
+  circlesPerSquareConservative = NULL;
 }
 
 RefRenderer::~RefRenderer() {
@@ -31,12 +39,28 @@ RefRenderer::~RefRenderer() {
     delete[] color;
     delete[] radius;
   }
+
+  if (measureEnabled) {
+    delete[] squaresPerCircleConservative;
+    delete[] circlesPerSquareConservative;
+  }
 }
 
 const Image *RefRenderer::getImage() { return image; }
 
 void RefRenderer::setup() {
-  // nothing to do here
+  if (measureEnabled) {
+    numLevels = 0;
+    numSquares = 0;
+    int size = image->width * image->height;
+    while (size > 0) {
+      numLevels += 1;
+      numSquares += size;
+      size /= 4;
+    }
+    squaresPerCircleConservative = new int[numCircles * numLevels];
+    circlesPerSquareConservative = new int[numSquares];
+  }
 }
 
 // allocOutputImage --
@@ -339,9 +363,17 @@ void RefRenderer::shadePixel(int circleIndex, float pixelCenterX,
 }
 
 void RefRenderer::render() {
+  if (measureEnabled) {
+    for (int i = 0; i < numCircles * numLevels; i++)
+      squaresPerCircleConservative[i] = 0;
+    for (int i = 0; i < numSquares; i++)
+      circlesPerSquareConservative[i] = 0;
+  }
 
   // render all circles
   for (int circleIndex = 0; circleIndex < numCircles; circleIndex++) {
+    if (measureEnabled)
+      printf("Rendering circle %d\n", circleIndex);
 
     int index3 = 3 * circleIndex;
 
@@ -371,6 +403,13 @@ void RefRenderer::render() {
     float invWidth = 1.f / image->width;
     float invHeight = 1.f / image->height;
 
+    std::vector<std::set<int>> squares;
+    if (measureEnabled) {
+      for (int level = 0; level < numLevels; level++) {
+        squares.emplace_back();
+      }
+    }
+
     // for each pixel in the bounding box, determine the circle's
     // contribution to the pixel.  The contribution is computed in
     // the function shadePixel.  Since the circle does not fill
@@ -382,6 +421,17 @@ void RefRenderer::render() {
       float *imgPtr = &image->data[4 * (pixelY * image->width + screenMinX)];
 
       for (int pixelX = screenMinX; pixelX < screenMaxX; pixelX++) {
+        if (measureEnabled) {
+          int offset = 0;
+          for (int level = 0; level < numLevels; level++) {
+            int columns = image->width >> level;
+            int i = pixelY >> level;
+            int j = pixelX >> level;
+            int index = offset + (i * columns + j);
+            squares[level].insert(index);
+            offset += (image->width * image->height) >> (2 * level);
+          }
+        }
 
         // When "shading" the pixel ("shading" = computing the
         // circle's color and opacity at the pixel), we treat
@@ -399,6 +449,122 @@ void RefRenderer::render() {
         imgPtr += 4;
       }
     }
+
+    if (measureEnabled) {
+      for (int level = 0; level < numLevels; level++) {
+        const std::set<int> &levelSquares = squares[level];
+        int count = levelSquares.size();
+        squaresPerCircleConservative[circleIndex * numLevels + level] = count;
+        for (int index : levelSquares)
+          circlesPerSquareConservative[index] += 1;
+      }
+    }
+  }
+
+  if (measureEnabled) {
+    std::string sceneNameStr;
+    switch (sceneName) {
+    case CIRCLE_RGB:
+      sceneNameStr = "rgb";
+      break;
+    case CIRCLE_RGBY:
+      sceneNameStr = "rgby";
+      break;
+    case CIRCLE_TEST_10K:
+      sceneNameStr = "rand10k";
+      break;
+    case CIRCLE_TEST_100K:
+      sceneNameStr = "rand100k";
+      break;
+    case PATTERN:
+      sceneNameStr = "pattern";
+      break;
+    case SNOWFLAKES:
+      sceneNameStr = "snow";
+      break;
+    case FIREWORKS:
+      sceneNameStr = "fireworks";
+      break;
+    case HYPNOSIS:
+      sceneNameStr = "hypnosis";
+      break;
+    case BOUNCING_BALLS:
+      sceneNameStr = "bouncingballs";
+      break;
+    case SNOWFLAKES_SINGLE_FRAME:
+      sceneNameStr = "snowsingle";
+      break;
+    case BIG_LITTLE:
+      sceneNameStr = "biglittle";
+      break;
+    case LITTLE_BIG:
+      sceneNameStr = "littlebig";
+      break;
+    case CIRCLE_TEST_1M:
+      sceneNameStr = "rand1M";
+      break;
+    case MICRO_2M:
+      sceneNameStr = "micro2M";
+      break;
+    }
+    std::string prefix = "stats/";
+    std::string filename = prefix + sceneNameStr + ".json";
+    printf("Writing statistics to %s\n", filename.c_str());
+    std::filesystem::create_directory("stats");
+    FILE *stats = fopen(filename.c_str(), "w");
+
+    fprintf(stats, "{\n  \"stats\": [\n    ");
+    bool firstLevel = true;
+    int offset = 0;
+    for (int level = 0; level < numLevels; level++) {
+      int size = 1 << level;
+
+      std::map<int, int> squaresPerCircleHistogram;
+      for (int circleIndex = 0; circleIndex < numCircles; circleIndex++) {
+        int count =
+            squaresPerCircleConservative[circleIndex * numLevels + level];
+        squaresPerCircleHistogram[count] += 1;
+      }
+      if (!firstLevel)
+        fprintf(stats, ",\n    ");
+      firstLevel = false;
+      fprintf(
+          stats,
+          "{\n      \"size\": %d,\n      \"squaresPerCircleConservative\": {",
+          size);
+      bool firstCircle = true;
+      for (const auto &elem : squaresPerCircleHistogram) {
+        if (!firstCircle)
+          fprintf(stats, ",");
+        firstCircle = false;
+        fprintf(stats, " \"%d\": %d", elem.first, elem.second);
+      }
+      fprintf(stats, " },\n      \"circlesPerSquareConservative\": {");
+
+      std::map<int, int> circlesPerSquareHistogram;
+      int columns = image->width >> level;
+      for (int i = 0; i * size < image->height; i++) {
+        for (int j = 0; j * size < image->width; j++) {
+          int index = offset + (i * columns + j);
+          int count = circlesPerSquareConservative[index];
+          circlesPerSquareHistogram[count] += 1;
+        }
+      }
+      bool firstSquare = true;
+      for (const auto &elem : circlesPerSquareHistogram) {
+        if (!firstSquare)
+          fprintf(stats, ",");
+        firstSquare = false;
+        fprintf(stats, " \"%d\": %d", elem.first, elem.second);
+      }
+
+      fprintf(stats, " }\n    }");
+
+      offset += (image->width * image->height) >> (2 * level);
+    }
+    fprintf(stats, "\n  ]\n}\n");
+
+    fclose(stats);
   }
 }
 

@@ -1,3 +1,4 @@
 *.ppm
 /objs/
 /render
+/stats/

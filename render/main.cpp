@@ -28,6 +28,8 @@ void usage(const char *progname) {
   printf("  -s  --size  <INT>             Rendered image size: <INT>x<INT> "
          "pixels (default=%d)\n",
          DEFAULT_IMAGE_SIZE);
+  printf("  -m  --measure                 Collect data and write to stats "
+         "directory\n");
   printf("  -b  --bench <START:END>       Run for frames [START,END) "
          "(default=[0,1))\n");
   printf("  -c  --check                   Check correctness of CUDA output "
@@ -51,15 +53,16 @@ int main(int argc, char **argv) {
   bool useRefRenderer = false;
   bool checkCorrectness = false;
   bool interactiveMode = false;
+  bool measureStats = false;
 
   // parse commandline options ////////////////////////////////////////////
   int opt;
   static struct option long_options[] = {
-      {"help", 0, 0, '?'},        {"check", 0, 0, 'c'}, {"bench", 1, 0, 'b'},
-      {"interactive", 0, 0, 'i'}, {"file", 1, 0, 'f'},  {"renderer", 1, 0, 'r'},
-      {"size", 1, 0, 's'},        {0, 0, 0, 0}};
+      {"help", 0, 0, '?'},        {"check", 0, 0, 'c'},   {"bench", 1, 0, 'b'},
+      {"interactive", 0, 0, 'i'}, {"measure", 0, 0, 'm'}, {"file", 1, 0, 'f'},
+      {"renderer", 1, 0, 'r'},    {"size", 1, 0, 's'},    {0, 0, 0, 0}};
 
-  while ((opt = getopt_long(argc, argv, "b:f:r:s:ci?", long_options, NULL)) !=
+  while ((opt = getopt_long(argc, argv, "b:f:r:s:cim?", long_options, NULL)) !=
          EOF) {
 
     switch (opt) {
@@ -76,6 +79,9 @@ int main(int argc, char **argv) {
       break;
     case 'c':
       checkCorrectness = true;
+      break;
+    case 'm':
+      measureStats = true;
       break;
     case 'f':
       frameFilename = optarg;
@@ -154,7 +160,7 @@ int main(int argc, char **argv) {
     CircleRenderer *ref_renderer;
     CircleRenderer *cuda_renderer;
 
-    ref_renderer = new RefRenderer();
+    ref_renderer = new RefRenderer(false);
     cuda_renderer = new CudaRenderer();
 
     ref_renderer->allocOutputImage(imageSize, imageSize);
@@ -169,7 +175,7 @@ int main(int argc, char **argv) {
   } else {
 
     if (useRefRenderer)
-      renderer = new RefRenderer();
+      renderer = new RefRenderer(measureStats);
     else
       renderer = new CudaRenderer();
 
