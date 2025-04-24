@@ -1,0 +1,6 @@
+[project]
+name = "stanford-cs149-asst3"
+version = "0.0.0"
+classifiers = ["Private :: Do Not Upload"]
+requires-python = ">=3.12"
+dependencies = ["jupyter~=1.0", "matplotlib~=3.0"]

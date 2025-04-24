@@ -50,9 +50,11 @@
           pkgs.llvmPackages_17.clang-tools
           pkgs.nixfmt-rfc-style
           pkgs.python3
+          pkgs.uv
           cudaScanRef
           renderRef
         ];
+        LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib"; # For Python deps.
       };
     };
 }
