@@ -702,6 +702,11 @@ void CudaRenderer::render() {
   // We work our way down to smaller and smaller squares.
   std::vector<int> squareSizes = {512, 256, 128, 64, 32, 16};
   for (int nextSquareSize : squareSizes) {
+    int gridSize = imageSize / squareSize;
+    int numSquares = gridSize * gridSize;
+    if (totalCirclesAcrossSquares / numSquares < 1000)
+      break; // Not worth the time to subdivide further.
+
     // Conservatively allocate enough memory to store all circle lists even if
     // every subsquare overlaps with all the same circles as its parent square.
     int ratio = squareSize / nextSquareSize;
@@ -716,7 +721,6 @@ void CudaRenderer::render() {
     std::vector<int> nextCircleIndexIndices(nextGridSize * nextGridSize);
 
     // Iterate over all the larger squares.
-    int gridSize = imageSize / squareSize;
     int nextCircleIndexIndex = 0;
     for (int squareY = 0; squareY < gridSize; squareY++) {
       for (int squareX = 0; squareX < gridSize; squareX++) {
