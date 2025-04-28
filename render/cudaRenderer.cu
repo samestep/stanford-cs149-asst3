@@ -662,9 +662,8 @@ void CudaRenderer::render() {
            imageSize);
     exit(1);
   }
-  float invSize = 1.f / imageSize;
 
-  int squareSize = 16;
+  int squareSize = 128;
   int gridSize = imageSize / squareSize;
   int numSquares = gridSize * gridSize;
 
