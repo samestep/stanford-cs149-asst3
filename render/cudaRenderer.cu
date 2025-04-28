@@ -8,9 +8,6 @@
 #include <cuda_runtime.h>
 #include <driver_functions.h>
 
-#include <thrust/copy.h>
-#include <thrust/device_ptr.h>
-
 #include "cudaRenderer.h"
 #include "image.h"
 #include "noise.h"
@@ -402,7 +399,7 @@ __device__ __inline__ void shadePixel(int circleIndex, float2 pixelCenter,
 // kernelRenderCircles -- (CUDA device code)
 //
 // Each thread renders a pixel.
-__global__ void kernelRenderCircles(int squareSize, int *numCircles,
+__global__ void kernelRenderCircles(int squareSize, int *circleCounts,
                                     int *indexOffsets, int *circleIndices) {
   int pixelX = blockIdx.x * blockDim.x + threadIdx.x;
   int pixelY = blockIdx.y * blockDim.y + threadIdx.y;
@@ -416,7 +413,7 @@ __global__ void kernelRenderCircles(int squareSize, int *numCircles,
   int squareX = pixelX / squareSize;
   int squareY = pixelY / squareSize;
   int squareIndex = squareY * gridWidth + squareX;
-  int count = numCircles[squareIndex];
+  int count = circleCounts[squareIndex];
   int offset = indexOffsets[squareIndex];
 
   for (int i = 0; i < count; i++) {
@@ -667,139 +664,85 @@ void CudaRenderer::render() {
   }
   float invSize = 1.f / imageSize;
 
-  int threadsPerBlock = 256;
+  int squareSize = 16;
+  int gridSize = imageSize / squareSize;
+  int numSquares = gridSize * gridSize;
 
-  // During each iteration, we consider the image to be divided into squares of
-  // a certain side length.
-  int squareSize = imageSize;
+  std::vector<int> circleCapacities(numSquares, 0);
+  std::vector<int> circleCounts(numSquares, 0);
+  std::vector<int> indexOffsets(numSquares, 0);
+  std::vector<int> circleIndices;
 
-  // For each square, we want to keep a list of the indices of all circles that
-  // potentially overlap with that square (not necessarily, e.g. if we're using
-  // a conservative check). At the beginning, there's just one square (the
-  // entire image), so we just consider all circles to potentially overlap it.
-  // This `circleIndexLengths` vector keeps track of the number of circles
-  // overlapping with each square.
-  std::vector<int> circleIndexLengths = {numCircles};
-
-  // In each iteration, we put all these lists of indices into a single
-  // `circleIndices` allocation, and we use a second `circleIndexIndices` vector
-  // to track the start index in `circleIndices` for the list for each square.
-  std::vector<int> circleIndexIndices = {0};
-  int *circleIndices;
-  cudaCheckError(cudaMalloc(&circleIndices, sizeof(int) * numCircles));
-
-  // At the start, we need to set the circle indices to just be the indices of
-  // all the circles.
-  int numBlocks = (numCircles + threadsPerBlock - 1) / threadsPerBlock;
-  kernelRange<<<numBlocks, threadsPerBlock>>>(numCircles, circleIndices);
-  cudaCheckError(cudaDeviceSynchronize());
-
-  // We also track the sum of the number of circles in each list across all
-  // squares, so that in each iteration we can just multiply this number by the
-  // square count ratio to get the size of the next allocation.
-  int totalCirclesAcrossSquares = numCircles;
-
-  // We work our way down to smaller and smaller squares.
-  std::vector<int> squareSizes = {512, 256, 128, 64, 32, 16};
-  for (int nextSquareSize : squareSizes) {
-    int gridSize = imageSize / squareSize;
-    int numSquares = gridSize * gridSize;
-    if (totalCirclesAcrossSquares / numSquares < 1000)
-      break; // Not worth the time to subdivide further.
-
-    // Conservatively allocate enough memory to store all circle lists even if
-    // every subsquare overlaps with all the same circles as its parent square.
-    int ratio = squareSize / nextSquareSize;
-    int *nextCircleIndices;
-    size_t bytes = sizeof(int) * (ratio * ratio) * totalCirclesAcrossSquares;
-    cudaCheckError(cudaMalloc(&nextCircleIndices, bytes));
-    totalCirclesAcrossSquares = 0;
-
-    // Allocate length and offset arrays for the new iteration.
-    int nextGridSize = imageSize / nextSquareSize;
-    std::vector<int> nextCircleIndexLengths(nextGridSize * nextGridSize);
-    std::vector<int> nextCircleIndexIndices(nextGridSize * nextGridSize);
-
-    // Iterate over all the larger squares.
-    int nextCircleIndexIndex = 0;
-    for (int squareY = 0; squareY < gridSize; squareY++) {
-      for (int squareX = 0; squareX < gridSize; squareX++) {
-        // Each larger square has a list of circles that may overlap with it;
-        // we'll filter this list for each smaller square in this square.
-        int squareIndex = squareY * gridSize + squareX;
-        int circleIndexLength = circleIndexLengths[squareIndex];
-        int circleIndexIndex = circleIndexIndices[squareIndex];
-
-        // Now iterate over all the smaller squares within this larger one.
-        int childIndex = 0;
-        for (int childSquareY = 0; childSquareY < ratio; childSquareY++) {
-          int nextSquareY = squareY * ratio + childSquareY;
-          for (int childSquareX = 0; childSquareX < ratio; childSquareX++) {
-            int nextSquareX = squareX * ratio + childSquareX;
-
-            int nextSquareIndex = nextSquareY * nextGridSize + nextSquareX;
-            nextCircleIndexIndices[nextSquareIndex] = nextCircleIndexIndex;
-
-            int *input = circleIndices + circleIndexIndex;
-            int *output = nextCircleIndices + nextCircleIndexIndex;
-
-            float boxL =
-                invSize * static_cast<float>(nextSquareX * nextSquareSize);
-            float boxR = invSize *
-                         static_cast<float>((nextSquareX + 1) * nextSquareSize);
-            float boxT = invSize *
-                         static_cast<float>((nextSquareY + 1) * nextSquareSize);
-            float boxB =
-                invSize * static_cast<float>(nextSquareY * nextSquareSize);
-            CircleInBoxPredicate predicate{boxL, boxR, boxT, boxB};
-
-            thrust::device_ptr<int> outputEnd = thrust::copy_if(
-                thrust::device_pointer_cast(input),
-                thrust::device_pointer_cast(input + circleIndexLength),
-                thrust::device_pointer_cast(output), predicate);
-            cudaCheckError(cudaDeviceSynchronize());
-
-            int nextCircleIndexLength = outputEnd.get() - output;
-            nextCircleIndexLengths[nextSquareIndex] = nextCircleIndexLength;
-            totalCirclesAcrossSquares += nextCircleIndexLength;
-
-            childIndex++;
-            nextCircleIndexIndex += circleIndexLength;
-          }
+  for (int i = 0; i < numCircles; i++) {
+    int i3 = 3 * i;
+    float x = position[i3];
+    float y = position[i3 + 1];
+    float r = radius[i];
+    int x0 = (x - r) * gridSize;
+    int x1 = ceil((x + r) * gridSize);
+    int y0 = (y - r) * gridSize;
+    int y1 = ceil((y + r) * gridSize);
+    if (x0 < 0)
+      x0 = 0;
+    if (x1 > gridSize)
+      x1 = gridSize;
+    if (y0 < 0)
+      y0 = 0;
+    if (y1 > gridSize)
+      y1 = gridSize;
+    for (int squareY = y0; squareY < y1; squareY++) {
+      for (int squareX = x0; squareX < x1; squareX++) {
+        int squareI = squareY * gridSize + squareX;
+        int cap = circleCapacities[squareI];
+        int count = circleCounts[squareI];
+        int offset = indexOffsets[squareI];
+        if (count == cap) {
+          if (cap == 0)
+            cap = 1;
+          else
+            cap *= 2;
+          circleCapacities[squareI] = cap;
+          int newOffset = circleIndices.size();
+          circleIndices.resize(newOffset + cap);
+          std::copy(circleIndices.begin() + offset,
+                    circleIndices.begin() + offset + count,
+                    circleIndices.begin() + newOffset);
+          offset = newOffset;
+          indexOffsets[squareI] = offset;
         }
+        circleIndices[offset + count] = i;
+        circleCounts[squareI] = count + 1;
       }
     }
-
-    // This next iteration has now become the current one.
-    cudaCheckError(cudaFree(circleIndices));
-    circleIndices = nextCircleIndices;
-    circleIndexIndices = nextCircleIndexIndices;
-    circleIndexLengths = nextCircleIndexLengths;
-    squareSize = nextSquareSize;
   }
 
-  int numSquares = (imageSize / squareSize) * (imageSize / squareSize);
+  int *gpuCircleCounts;
+  int *gpuIndexOffsets;
+  int *gpuCircleIndices;
 
-  int *numCircles;
-  int *indexOffsets;
+  cudaCheckError(cudaMalloc(&gpuCircleCounts, sizeof(int) * numSquares));
+  cudaCheckError(cudaMalloc(&gpuIndexOffsets, sizeof(int) * numSquares));
+  cudaCheckError(
+      cudaMalloc(&gpuCircleIndices, sizeof(int) * circleIndices.size()));
 
-  cudaCheckError(cudaMalloc(&numCircles, sizeof(int) * numSquares));
-  cudaCheckError(cudaMalloc(&indexOffsets, sizeof(int) * numSquares));
-
-  cudaCheckError(cudaMemcpy(numCircles, circleIndexLengths.data(),
+  cudaCheckError(cudaMemcpy(gpuCircleCounts, circleCounts.data(),
                             sizeof(int) * numSquares, cudaMemcpyHostToDevice));
-  cudaCheckError(cudaMemcpy(indexOffsets, circleIndexIndices.data(),
+  cudaCheckError(cudaMemcpy(gpuIndexOffsets, indexOffsets.data(),
                             sizeof(int) * numSquares, cudaMemcpyHostToDevice));
+  cudaCheckError(cudaMemcpy(gpuCircleIndices, circleIndices.data(),
+                            sizeof(int) * circleIndices.size(),
+                            cudaMemcpyHostToDevice));
 
   // 256 threads per block is a healthy number
   dim3 blockDim(16, 16);
   dim3 gridDim((image->width + blockDim.x - 1) / blockDim.x,
                (image->height + blockDim.y - 1) / blockDim.y);
 
-  kernelRenderCircles<<<gridDim, blockDim>>>(squareSize, numCircles,
-                                             indexOffsets, circleIndices);
+  kernelRenderCircles<<<gridDim, blockDim>>>(squareSize, gpuCircleCounts,
+                                             gpuIndexOffsets, gpuCircleIndices);
   cudaCheckError(cudaDeviceSynchronize());
 
-  cudaCheckError(cudaFree(indexOffsets));
-  cudaCheckError(cudaFree(numCircles));
+  cudaCheckError(cudaFree(gpuCircleIndices));
+  cudaCheckError(cudaFree(gpuIndexOffsets));
+  cudaCheckError(cudaFree(gpuCircleCounts));
 }
